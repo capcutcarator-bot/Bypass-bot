@@ -1,13 +1,13 @@
 """
 SHUVO AI OFFICIAL — Link Bypass Bot
 Only responds to registered commands. No reply on plain text.
+(Turso DB removed — using in-memory storage. Data resets on restart.)
 """
 
 import logging
 import time
 import requests
 import telebot
-import libsql_client
 from telebot import types
 from urllib.parse import urlparse
 
@@ -15,10 +15,6 @@ from urllib.parse import urlparse
 BOT_TOKEN = "8746241415:AAGf_HEP6Iy5GJXH0GFTTK-3nnwhytzRYEw"
 BYPASS_API = "https://shuvo-bypasser-k8iw.onrender.com/bypass"
 ADMIN_IDS = [8600328303]  # <-- replace with your real Telegram user id(s)
-
-# Turso database config (get from turso.tech dashboard)
-TURSO_DATABASE_URL = "libsql://shuvo-capcutcarator-bot.aws-ap-northeast-1.turso.io"
-TURSO_AUTH_TOKEN = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODUyNTUwNTQsImlkIjoiMDE5ZmE5N2UtMWQwMS03ODVjLWI2MWUtYWQ3MTU1NjEzYTA3Iiwia2lkIjoiOEUxQnNTdVFDVERMVTg2S3gzeml2aXZob3pXV0RtTWZicFhISnM5N050VSIsInJpZCI6ImQwZjAyNWE3LWNkMzItNGI0YS04Njg2LTU2MmUzMDExYzcwNSJ9.dG8cBxhl25B46G5nBUWRMViOUfPvi3tobDDUcU3frfJlK4PQGhnCzj3Of0DKr9okYVRONgnu2I5UwkRZ7IXiCw"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,16 +24,9 @@ log = logging.getLogger("bypass-bot")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
-# ── Persistent Storage (Turso — embedded replica, syncs with cloud) ──
-db = libsql.connect("local_bypass.db", sync_url=TURSO_DATABASE_URL, auth_token=TURSO_AUTH_TOKEN)
-db.sync()
-
-db.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY)")
-db.execute(
-    "CREATE TABLE IF NOT EXISTS usage (id INTEGER PRIMARY KEY, date TEXT, count INTEGER)"
-)
-db.commit()
-db.sync()
+# ── In-memory storage (NOT persistent — resets on restart/redeploy) ──
+known_users = set()
+usage_data = {}  # {user_id: {"date": "YYYY-MM-DD", "count": int}}
 
 stats = {"total_requests": 0, "success": 0, "failed": 0}
 
@@ -67,37 +56,16 @@ class SBtn(types.InlineKeyboardButton):
         return d
 
 
-# ── User storage (Turso — persists across restarts/redeploys) ──
-def load_users() -> set:
-    try:
-        rows = db.execute("SELECT id FROM users").fetchall()
-        return {row[0] for row in rows}
-    except Exception as e:
-        log.error(f"Failed to load users from Turso: {e}")
-        return set()
-
-
-known_users = load_users()
-
-
+# ── User storage (in-memory) ──
 def register_user(user_id: int):
-    if user_id not in known_users:
-        known_users.add(user_id)
-        try:
-            db.execute(
-                "INSERT OR IGNORE INTO users (id) VALUES (?)", (user_id,)
-            )
-            db.commit()
-            db.sync()
-        except Exception as e:
-            log.error(f"Failed to register user {user_id} in Turso: {e}")
+    known_users.add(user_id)
 
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
-# ── Daily bypass limit (non-admins only, Turso-backed) ─
+# ── Daily bypass limit (non-admins only, in-memory) ─
 DAILY_LIMIT = 20
 
 
@@ -106,38 +74,19 @@ def today_str() -> str:
 
 
 def get_usage_count(user_id: int) -> int:
-    try:
-        row = db.execute(
-            "SELECT date, count FROM usage WHERE id = ?", (user_id,)
-        ).fetchone()
-    except Exception as e:
-        log.error(f"Failed to read usage for {user_id}: {e}")
+    entry = usage_data.get(user_id)
+    if not entry or entry["date"] != today_str():
         return 0
-    if not row or row[0] != today_str():
-        return 0
-    return row[1] or 0
+    return entry["count"]
 
 
 def increment_usage(user_id: int):
     today = today_str()
-    try:
-        row = db.execute(
-            "SELECT date, count FROM usage WHERE id = ?", (user_id,)
-        ).fetchone()
-        if not row or row[0] != today:
-            db.execute(
-                "INSERT INTO usage (id, date, count) VALUES (?, ?, 1) "
-                "ON CONFLICT(id) DO UPDATE SET date = excluded.date, count = 1",
-                (user_id, today),
-            )
-        else:
-            db.execute(
-                "UPDATE usage SET count = count + 1 WHERE id = ?", (user_id,)
-            )
-        db.commit()
-        db.sync()
-    except Exception as e:
-        log.error(f"Failed to increment usage for {user_id}: {e}")
+    entry = usage_data.get(user_id)
+    if not entry or entry["date"] != today:
+        usage_data[user_id] = {"date": today, "count": 1}
+    else:
+        entry["count"] += 1
 
 
 def remaining_quota(user_id: int) -> int:
@@ -147,17 +96,7 @@ def remaining_quota(user_id: int) -> int:
 
 
 def reset_usage(user_id: int):
-    try:
-        today = today_str()
-        db.execute(
-            "INSERT INTO usage (id, date, count) VALUES (?, ?, 0) "
-            "ON CONFLICT(id) DO UPDATE SET date = excluded.date, count = 0",
-            (user_id, today),
-        )
-        db.commit()
-        db.sync()
-    except Exception as e:
-        log.error(f"Failed to reset usage for {user_id}: {e}")
+    usage_data[user_id] = {"date": today_str(), "count": 0}
 
 
 # ── Helpers ───────────────────────────────────────────────
@@ -578,4 +517,4 @@ def ignore_non_commands(message):
 if __name__ == "__main__":
     log.info("SHUVO Link Bypass Bot starting...")
     bot.infinity_polling(skip_pending=True)
-        
+    
