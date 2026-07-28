@@ -5,9 +5,12 @@ Only responds to registered commands. No reply on plain text.
 """
 
 import logging
+import os
+import threading
 import time
 import requests
 import telebot
+from flask import Flask
 from telebot import types
 from urllib.parse import urlparse
 
@@ -23,6 +26,20 @@ logging.basicConfig(
 log = logging.getLogger("bypass-bot")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
+
+# ── Keep-alive HTTP server (Render needs an open port to detect the service) ──
+web_app = Flask(__name__)
+
+
+@web_app.route("/")
+@web_app.route("/health")
+def health():
+    return "OK", 200
+
+
+def run_flask():
+    port = int(os.environ.get("PORT", 5000))
+    web_app.run(host="0.0.0.0", port=port)
 
 # ── In-memory storage (NOT persistent — resets on restart/redeploy) ──
 known_users = set()
@@ -515,6 +532,7 @@ def ignore_non_commands(message):
 
 # ── Run ───────────────────────────────────────────────────
 if __name__ == "__main__":
+    threading.Thread(target=run_flask, daemon=True).start()
     log.info("SHUVO Link Bypass Bot starting...")
     bot.infinity_polling(skip_pending=True)
-    
+        
