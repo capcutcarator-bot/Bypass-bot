@@ -12,12 +12,12 @@ from telebot import types
 from urllib.parse import urlparse
 
 # ── Hardcoded Config ─────────────────────────────────────
-BOT_TOKEN = "PUT_YOUR_BOTFATHER_TOKEN_HERE"
+BOT_TOKEN = "8746241415:AAGf_HEP6Iy5GJXH0GFTTK-3nnwhytzRYEw"
 BYPASS_API = "https://shuvo-bypasser-k8iw.onrender.com/bypass"
-ADMIN_IDS = [123456789]  # <-- replace with your real Telegram user id(s)
+ADMIN_IDS = [8600328303]  # <-- replace with your real Telegram user id(s)
 
 # MongoDB Atlas free cluster connection string (get from cloud.mongodb.com)
-MONGO_URI = "PUT_YOUR_MONGODB_ATLAS_CONNECTION_STRING_HERE"
+MONGO_URI = "mongodb+srv://sajidbbz55_db_user:shuvobhai@cluster0.ker9hya.mongodb.net/?appName=Cluster0"
 
 logging.basicConfig(
     level=logging.INFO,
