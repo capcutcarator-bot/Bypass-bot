@@ -3,12 +3,11 @@ SHUVO AI OFFICIAL — Link Bypass Bot
 Only responds to registered commands. No reply on plain text.
 """
 
-import json
 import logging
-import os
 import time
 import requests
 import telebot
+from pymongo import MongoClient
 from telebot import types
 from urllib.parse import urlparse
 
@@ -17,7 +16,8 @@ BOT_TOKEN = "PUT_YOUR_BOTFATHER_TOKEN_HERE"
 BYPASS_API = "https://shuvo-bypasser-k8iw.onrender.com/bypass"
 ADMIN_IDS = [123456789]  # <-- replace with your real Telegram user id(s)
 
-USERS_FILE = "users.json"
+# MongoDB Atlas free cluster connection string (get from cloud.mongodb.com)
+MONGO_URI = "PUT_YOUR_MONGODB_ATLAS_CONNECTION_STRING_HERE"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,12 +27,17 @@ log = logging.getLogger("bypass-bot")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
+# ── Persistent Storage (MongoDB Atlas — survives restarts/redeploys) ──
+mongo = MongoClient(MONGO_URI)
+db = mongo["shuvo_bypass_bot"]
+users_col = db["users"]        # { _id: user_id }
+usage_col = db["usage"]        # { _id: user_id, date: "YYYY-MM-DD", count: N }
+
 stats = {"total_requests": 0, "success": 0, "failed": 0}
 
 # ── Branding ──────────────────────────────────────────────
 DIVIDER = "▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬"
 FOOTER = f"\n{DIVIDER}\n<i>⚡ SHUVO AI OFFICIAL</i>"
-
 
 def brand(body: str) -> str:
     return f"{body}{FOOTER}"
@@ -56,20 +61,13 @@ class SBtn(types.InlineKeyboardButton):
         return d
 
 
-# ── User storage (for broadcast) ─────────────────────────
+# ── User storage (MongoDB — persists across restarts/redeploys) ──
 def load_users() -> set:
-    if os.path.exists(USERS_FILE):
-        try:
-            with open(USERS_FILE, "r") as f:
-                return set(json.load(f))
-        except Exception:
-            return set()
-    return set()
-
-
-def save_users(users: set):
-    with open(USERS_FILE, "w") as f:
-        json.dump(list(users), f)
+    try:
+        return {doc["_id"] for doc in users_col.find({}, {"_id": 1})}
+    except Exception as e:
+        log.error(f"Failed to load users from MongoDB: {e}")
+        return set()
 
 
 known_users = load_users()
@@ -78,34 +76,18 @@ known_users = load_users()
 def register_user(user_id: int):
     if user_id not in known_users:
         known_users.add(user_id)
-        save_users(known_users)
+        try:
+            users_col.update_one({"_id": user_id}, {"$set": {"_id": user_id}}, upsert=True)
+        except Exception as e:
+            log.error(f"Failed to register user {user_id} in MongoDB: {e}")
 
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
-# ── Daily bypass limit (non-admins only) ─────────────────
+# ── Daily bypass limit (non-admins only, MongoDB-backed) ─
 DAILY_LIMIT = 20
-USAGE_FILE = "usage.json"
-
-
-def load_usage() -> dict:
-    if os.path.exists(USAGE_FILE):
-        try:
-            with open(USAGE_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
-
-def save_usage(usage: dict):
-    with open(USAGE_FILE, "w") as f:
-        json.dump(usage, f)
-
-
-usage_data = load_usage()
 
 
 def today_str() -> str:
@@ -113,20 +95,30 @@ def today_str() -> str:
 
 
 def get_usage_count(user_id: int) -> int:
-    entry = usage_data.get(str(user_id))
-    if not entry or entry.get("date") != today_str():
+    try:
+        doc = usage_col.find_one({"_id": user_id})
+    except Exception as e:
+        log.error(f"Failed to read usage for {user_id}: {e}")
         return 0
-    return entry.get("count", 0)
+    if not doc or doc.get("date") != today_str():
+        return 0
+    return doc.get("count", 0)
 
 
 def increment_usage(user_id: int):
-    key = str(user_id)
-    entry = usage_data.get(key)
-    if not entry or entry.get("date") != today_str():
-        entry = {"date": today_str(), "count": 0}
-    entry["count"] += 1
-    usage_data[key] = entry
-    save_usage(usage_data)
+    today = today_str()
+    try:
+        doc = usage_col.find_one({"_id": user_id})
+        if not doc or doc.get("date") != today:
+            usage_col.update_one(
+                {"_id": user_id},
+                {"$set": {"_id": user_id, "date": today, "count": 1}},
+                upsert=True,
+            )
+        else:
+            usage_col.update_one({"_id": user_id}, {"$inc": {"count": 1}})
+    except Exception as e:
+        log.error(f"Failed to increment usage for {user_id}: {e}")
 
 
 def remaining_quota(user_id: int) -> int:
@@ -136,8 +128,14 @@ def remaining_quota(user_id: int) -> int:
 
 
 def reset_usage(user_id: int):
-    usage_data[str(user_id)] = {"date": today_str(), "count": 0}
-    save_usage(usage_data)
+    try:
+        usage_col.update_one(
+            {"_id": user_id},
+            {"$set": {"_id": user_id, "date": today_str(), "count": 0}},
+            upsert=True,
+        )
+    except Exception as e:
+        log.error(f"Failed to reset usage for {user_id}: {e}")
 
 
 # ── Helpers ───────────────────────────────────────────────
@@ -558,4 +556,3 @@ def ignore_non_commands(message):
 if __name__ == "__main__":
     log.info("SHUVO Link Bypass Bot starting...")
     bot.infinity_polling(skip_pending=True)
-
