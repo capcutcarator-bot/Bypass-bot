@@ -7,7 +7,7 @@ import logging
 import time
 import requests
 import telebot
-import libsql_experimental as libsql
+import libsql_client
 from telebot import types
 from urllib.parse import urlparse
 
