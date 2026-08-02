@@ -24,7 +24,7 @@ BOT_TOKEN = "8746241415:AAE2XgNB4t-aUEmFipB626rFJmdtPQ_ljEM"
 MONGODB_URI = "mongodb+srv://playzarmc_db_user:vmfWz66SV3wrWUdV@cluster0.orj9xl9.mongodb.net"
 BYPASS_API = os.environ.get(
     "BYPASS_API",
-    "https://shuvo-bypasser-k8iw.onrender.com/bypass",
+    "https://alexbypassapi.up.railway.app/bypass?url=",
 ).strip()
 ADMIN_IDS = [8600328303]
 DAILY_LIMIT = 20
