@@ -20,7 +20,7 @@ from telebot import types
 
 
 # ── Config ──────────────────────────────────────────────────
-BOT_TOKEN = "8746241415:AAE2XgNB4t-aUEmFipB626rFJmdtPQ_ljEM"
+BOT_TOKEN = "8746241415:AAENlbybxoYlXwqf44ouy1MjpMaXyKNtuyc"
 MONGODB_URI = "mongodb+srv://playzarmc_db_user:vmfWz66SV3wrWUdV@cluster0.orj9xl9.mongodb.net"
 BYPASS_API = os.environ.get(
     "BYPASS_API",
